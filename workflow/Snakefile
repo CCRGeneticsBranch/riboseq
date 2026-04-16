@@ -1,0 +1,244 @@
+"""
+Pipeline to process RiboLace data
+Based on Immagina ALL-IN-ONE RiboLace Gel Free documentation (V15.5)
+"""
+
+import csv
+import os
+
+RAW_DATA_DIR = config.get("raw_data_dir", ".")
+RESULTS_DIR = config.get("results_dir", "results")
+SAMPLES_TSV = config.get("samples", "config/samples.tsv")
+
+
+def load_samples(samples_tsv):
+	"""Load single-end sample sheet with columns: Sample, Fastq."""
+	samples_path = samples_tsv if os.path.isabs(samples_tsv) else os.path.abspath(samples_tsv)
+	if not os.path.exists(samples_path):
+		raise ValueError(f"Sample metadata file not found: {samples_tsv}")
+
+	with open(samples_path, newline="") as handle:
+		reader = csv.DictReader(handle, delimiter="\t")
+		required_cols = {"Sample", "Fastq"}
+		if reader.fieldnames is None:
+			raise ValueError(f"Sample metadata TSV appears empty: {samples_tsv}")
+
+		missing = required_cols - set(reader.fieldnames)
+		if missing:
+			raise ValueError(
+				f"Sample metadata TSV is missing required columns: {sorted(missing)}"
+			)
+
+		records = list(reader)
+
+	if not records:
+		raise ValueError("Sample metadata TSV has no samples")
+
+	sample_map = {}
+	for row in records:
+		sample = row["Sample"].strip()
+		fastq = row["Fastq"].strip()
+		if not sample or not fastq:
+			raise ValueError("Each sample row must include non-empty 'Sample' and 'Fastq' values")
+		if sample in sample_map:
+			raise ValueError(f"Duplicate sample name in sample sheet: {sample}")
+		sample_map[sample] = fastq
+	return sample_map
+
+
+SAMPLES = load_samples(SAMPLES_TSV)
+SAMPLE_NAMES = list(SAMPLES.keys())
+
+
+rule all:
+	input:
+		expand(f"{RESULTS_DIR}/01_linker_trim/{{sample}}.trim.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/02_umi_extract/{{sample}}.umi.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/03_remove_t/{{sample}}.trim2.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/qc/{{sample}}.fastqc.done.txt", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/04_filter_contaminants/{{sample}}.clean.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/05_star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/06_ribowaltz/{{sample}}.riboWaltz.done.txt", sample=SAMPLE_NAMES),
+
+
+# ---------------------------------------------------------------------------
+# Step E2: UMI extraction/trimming
+# ---------------------------------------------------------------------------
+
+# Cutadapt to remove linker MC+ and following sequence from 3' end
+# Only reads longer than X+9 nt are retained (X is length of the RPF
+# (usually X=20 for ribosome profiling analysis), and 9 is the sum of
+# the lengths of the 5' and 3' UMIs)
+# -a Removal of the LACE-seq 3' linker and any sequence that may follow
+# Reads in which no adapter is found are discarded
+#
+# cutadapt --cores N --minimum-length X+9 -a TCTCCTTGCATAATCACCAACC \
+#   --discard-untrimmed -o trim.fastq input.fastq
+
+rule remove_linker:
+	input:
+		lambda wc: f"{RAW_DATA_DIR}/{SAMPLES[wc.sample]}"
+	output:
+		f"{RESULTS_DIR}/01_linker_trim/{{sample}}.trim.fastq.gz"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/01_linker_trim
+		cp {input} {output}
+		"""
+
+
+# UMI-tools extract to move UMI sequence to read name
+# Extract the first 4 (5'UMI) and the last 4 bases (3'UMI) of each read
+#
+# umi_tools extract -I trim.fastq \
+#   --bc-pattern='^(?P<umi_1>.{4}).+(?P<umi_2>.{4})$' \
+#   --extract-method=regex -S extract.fastq --log=<umi_extract.log>
+
+rule extract_umi:
+	input:
+		f"{RESULTS_DIR}/01_linker_trim/{{sample}}.trim.fastq.gz"
+	output:
+		f"{RESULTS_DIR}/02_umi_extract/{{sample}}.umi.fastq.gz"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/02_umi_extract
+		cp {input} {output}
+		"""
+
+
+# Cutadapt to remove preceding T
+#
+# cutadapt --cores N -g ^T --discard-untrimmed -o trim2.fastq extract.fastq
+
+rule remove_t:
+	input:
+		f"{RESULTS_DIR}/02_umi_extract/{{sample}}.umi.fastq.gz"
+	output:
+		f"{RESULTS_DIR}/03_remove_t/{{sample}}.trim2.fastq.gz"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/03_remove_t
+		cp {input} {output}
+		"""
+
+
+# QC
+
+rule fastqc:
+	input:
+		f"{RESULTS_DIR}/03_remove_t/{{sample}}.trim2.fastq.gz"
+	output:
+		f"{RESULTS_DIR}/qc/{{sample}}.fastqc.done.txt"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/qc
+		echo "FASTQC PLACEHOLDER: run FastQC on {input}" > {output}
+		"""
+
+
+# ---------------------------------------------------------------------------
+# Step E3: Filtering rRNA, tRNA and ncRNA
+# ---------------------------------------------------------------------------
+
+# Create a FASTA containing contaminating sequences from your sample
+# To build bowtie2 indexes fasta files of tRNAs, rRNAs and snRNAs or ncRNAs
+# are necessary (https://rnacentral.org/)
+#
+# bowtie2-build --threads N - f <reference.fasta.file> <given_index_name>
+
+rule create_contaminant_index:
+	output:
+		f"{RESULTS_DIR}/04_filter_contaminants/contaminant_index.done.txt"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/04_filter_contaminants
+		echo "CONTAMINANT INDEX PLACEHOLDER" > {output}
+		"""
+
+
+# Remove and quantify contaminants (rRNA, tRNA, snRNA) by aligning trimmed
+# reads against contaminant sequences with Bowtie2
+# Allows 1 mismatch (-N)
+# --no-1mm-upfront prevents Bowtie2 from searching for 1-mismatch
+# end-to-end alignments
+#
+# bowtie2 --threads N -N 1 --no-1mm-upfront -q <trimmed.fastq.gz> \
+#   --un=<norRNA.fastq.gz> -x <rRNA_bowtie_index>
+# bowtie2 --threads N -N 1 --no-1mm-upfront -q <norRNA.fastq.gz> \
+#   --un=<norRNA_notRNA.fastq.gz> -x <tRNA_bowtie_index>
+# bowtie2 --threads N -N 1 --no-1mm-upfront -q <norRNA_notRNA.fastq.gz> \
+#   --un=<norRNA_notRNA_noncRNA.fastq.gz> -x <ncRNA_bowtie_index>
+
+rule remove_contaminants:
+	input:
+		fastq=f"{RESULTS_DIR}/03_remove_t/{{sample}}.trim2.fastq.gz",
+		idx=f"{RESULTS_DIR}/04_filter_contaminants/contaminant_index.done.txt",
+	output:
+		f"{RESULTS_DIR}/04_filter_contaminants/{{sample}}.clean.fastq.gz"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/04_filter_contaminants
+		cp {input.fastq} {output}
+		"""
+
+
+# ---------------------------------------------------------------------------
+# Step E4: STAR alignment to genome
+# ---------------------------------------------------------------------------
+
+# calculated size is 14 for hg38
+#
+# STAR --runMode genomeGenerate --runThreadN N --genomeDir <location_for_index> \
+#   --genomeFastaFiles <location_of_fasta_file> \
+#   --genomeSAindexNbases <calculated size> --sjdbGTFfile <location_of_gtf_file>
+
+rule create_star_index:
+	output:
+		f"{RESULTS_DIR}/05_star/star_index.done.txt"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/05_star
+		echo "STAR INDEX PLACEHOLDER" > {output}
+		"""
+
+
+rule star_alignment:
+	input:
+		fastq=f"{RESULTS_DIR}/04_filter_contaminants/{{sample}}.clean.fastq.gz",
+		idx=f"{RESULTS_DIR}/05_star/star_index.done.txt",
+	output:
+		f"{RESULTS_DIR}/05_star/{{sample}}.Aligned.sortedByCoord.out.bam"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/05_star
+		printf "BAM PLACEHOLDER for %s\n" {wildcards.sample} > {output}
+		"""
+
+
+# ---------------------------------------------------------------------------
+# Step E5: RiboWaltz pipeline
+# ---------------------------------------------------------------------------
+
+# Ribosomal footprint analysis
+# R package that integrates QC of ribosome profiling data and P-site
+# identification for improved interpretation of positional information
+# Use transcriptome BAM file and GTF annotation file to run riboWaltz
+# (https://github.com/LabTranslationalArchitectomics/riboWaltz)
+
+rule ribowaltz:
+	input:
+		f"{RESULTS_DIR}/05_star/{{sample}}.Aligned.sortedByCoord.out.bam"
+	output:
+		f"{RESULTS_DIR}/06_ribowaltz/{{sample}}.riboWaltz.done.txt"
+	shell:
+		"""
+		mkdir -p {RESULTS_DIR}/06_ribowaltz
+		echo "RiboWaltz PLACEHOLDER: analyze {input}" > {output}
+		"""
+
+# Counts
+#
+# UMI-tools dedup can be used after alignment to remove duplicates based on
+# the mapping coordinate and the UMI attached to the read name
+#
+# Differentially Translated Genes - compare to DEGs

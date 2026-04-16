@@ -1,0 +1,25 @@
+# Ribo-seq config
+
+# Sample sheet TSV (columns: Sample, Fastq)
+samples: WORKDIR/config/samples.tsv
+
+# Input FASTQ directory (single-end)
+raw_data_dir: "/path/to/raw/fastqs"
+
+# Output directory
+results_dir: WORKDIR/results
+
+# Optional references for future production rules
+reference_fasta: "/path/to/reference/genome.fa"
+reference_gtf: "/path/to/reference/annotation.gtf"
+contaminant_fasta: "/path/to/contaminants/contaminants.fa"
+
+# HPC env modules (placeholder values, adjust on cluster)
+modules:
+  cutadapt: "cutadapt"
+  umi_tools: "umi_tools"
+  fastqc: "fastqc"
+  bowtie2: "bowtie2"
+  star: "star"
+  samtools: "samtools"
+  r: "R"
