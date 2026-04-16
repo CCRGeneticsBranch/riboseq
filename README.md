@@ -11,21 +11,40 @@ This repository contains an in-development Snakemake pipeline for single-end Rib
   - contaminant filtering
   - STAR alignment
   - riboWaltz handoff
-- Original draft notes and example commands are preserved in comments in the Snakefile.
 
 ## Config files
 
 - `config/config.yaml`: run configuration template
 - `config/samples.tsv`: sample sheet template (columns: `Sample`, `Fastq`)
 
-## Basic usage
+## Running with run_riboseq.sh
 
-1. Copy/edit `config/config.yaml` for your run directory.
-2. Edit `config/samples.tsv` with sample names and FASTQ filenames.
-3. Run Snakemake with a config file:
+Use [run_riboseq.sh](run_riboseq.sh) with `--runmode` and `--workdir`.
+
+### 1. Initialize a run directory
+
+This creates the work directory and copies config files.
 
 ```bash
-snakemake --snakefile workflow/Snakefile --configfile config/config.yaml -n
+bash run_riboseq.sh --runmode=init --workdir=/path/to/my_run
 ```
 
-This pipeline is scaffolded for development and will be expanded with production tool commands.
+Then edit:
+- ` /path/to/my_run/config/config.yaml`
+- ` /path/to/my_run/config/samples.tsv`
+
+### 2. Dry run
+
+This validates the workflow and planned jobs without executing them.
+
+```bash
+bash run_riboseq.sh --runmode=dryrun --workdir=/path/to/my_run
+```
+
+### 3. Run on SLURM
+
+This submits the pipeline through the Biowulf/SLURM path used by the wrapper.
+
+```bash
+bash run_riboseq.sh --runmode=run --workdir=/path/to/my_run
+```

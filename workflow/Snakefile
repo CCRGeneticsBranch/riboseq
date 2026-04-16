@@ -6,18 +6,18 @@ Based on Immagina ALL-IN-ONE RiboLace Gel Free documentation (V15.5)
 import csv
 import os
 
-RAW_DATA_DIR = config.get("raw_data_dir", ".")
-RESULTS_DIR = config.get("results_dir", "results")
-SAMPLES_TSV = config.get("samples", "config/samples.tsv")
+RAW_DATA_DIR = config["raw_data_dir"]
+RESULTS_DIR = config["results_dir"]
+SAMPLES_TSV = config["samples"]
+MODULES = config["modules"]
 
 
 def load_samples(samples_tsv):
 	"""Load single-end sample sheet with columns: Sample, Fastq."""
-	samples_path = samples_tsv if os.path.isabs(samples_tsv) else os.path.abspath(samples_tsv)
-	if not os.path.exists(samples_path):
+	if not os.path.exists(samples_tsv):
 		raise ValueError(f"Sample metadata file not found: {samples_tsv}")
 
-	with open(samples_path, newline="") as handle:
+	with open(samples_tsv, newline="") as handle:
 		reader = csv.DictReader(handle, delimiter="\t")
 		required_cols = {"Sample", "Fastq"}
 		if reader.fieldnames is None:
@@ -50,16 +50,49 @@ SAMPLES = load_samples(SAMPLES_TSV)
 SAMPLE_NAMES = list(SAMPLES.keys())
 
 
+localrules: multiqc
+
+
 rule all:
 	input:
-		expand(f"{RESULTS_DIR}/01_linker_trim/{{sample}}.trim.fastq.gz", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/02_umi_extract/{{sample}}.umi.fastq.gz", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/03_remove_t/{{sample}}.trim2.fastq.gz", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/qc/{{sample}}.fastqc.done.txt", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/04_filter_contaminants/{{sample}}.clean.fastq.gz", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/05_star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/06_ribowaltz/{{sample}}.riboWaltz.done.txt", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/qc/{{sample}}_fastqc.html", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/qc/{{sample}}_fastqc.zip", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/trim/{{sample}}.trim.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/trim/{{sample}}.umi.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/ribowaltz/{{sample}}.riboWaltz.done.txt", sample=SAMPLE_NAMES),
+		f"{RESULTS_DIR}/qc/multiqc_report.html",
 
+
+# QC
+
+rule fastqc:
+	input:
+		lambda wc: f"{RAW_DATA_DIR}/{SAMPLES[wc.sample]}"
+	output:
+		html = f"{RESULTS_DIR}/qc/{{sample}}_fastqc.html",
+		zip = f"{RESULTS_DIR}/qc/{{sample}}_fastqc.zip"
+	params:
+		outdir=f"{RESULTS_DIR}/qc"
+	envmodules:
+		MODULES["fastqc"]
+	shell:
+		"""
+		# Get the input filename without path
+		infile=$(basename {input})
+		inbase="${{infile%.*}}"  # Remove .gz
+		inbase="${{inbase%.*}}"  # Remove .fastq
+		
+		# Run fastqc
+		fastqc --threads $SLURM_CPUS_PER_TASK -o {params.outdir} {input}
+		
+		# Rename outputs to match expected naming
+		mv {params.outdir}/${{inbase}}_fastqc.html {output.html}
+		mv {params.outdir}/${{inbase}}_fastqc.zip {output.zip}
+		"""
+        
 
 # ---------------------------------------------------------------------------
 # Step E2: UMI extraction/trimming
@@ -79,11 +112,17 @@ rule remove_linker:
 	input:
 		lambda wc: f"{RAW_DATA_DIR}/{SAMPLES[wc.sample]}"
 	output:
-		f"{RESULTS_DIR}/01_linker_trim/{{sample}}.trim.fastq.gz"
+		f"{RESULTS_DIR}/trim/{{sample}}.trim.fastq.gz"
+	params:
+		adapter="TCTCCTTGCATAATCACCAACC",
+		min_length=29,
+	envmodules:
+		MODULES["cutadapt"]
 	shell:
 		"""
-		mkdir -p {RESULTS_DIR}/01_linker_trim
-		cp {input} {output}
+		cutadapt --cores $SLURM_CPUS_PER_TASK --minimum-length {params.min_length} \
+			-a {params.adapter} --discard-untrimmed \
+			-o {output} {input}
 		"""
 
 
@@ -96,13 +135,22 @@ rule remove_linker:
 
 rule extract_umi:
 	input:
-		f"{RESULTS_DIR}/01_linker_trim/{{sample}}.trim.fastq.gz"
+		f"{RESULTS_DIR}/trim/{{sample}}.trim.fastq.gz"
 	output:
-		f"{RESULTS_DIR}/02_umi_extract/{{sample}}.umi.fastq.gz"
+		f"{RESULTS_DIR}/trim/{{sample}}.umi.fastq.gz"
+	log:
+		f"{RESULTS_DIR}/trim/{{sample}}.umi_extract.log"
+	params:
+		bc_pattern="^(?P<umi_1>.{{4}}).+(?P<umi_2>.{{4}})$"
+	envmodules:
+		MODULES["umi_tools"]
 	shell:
 		"""
-		mkdir -p {RESULTS_DIR}/02_umi_extract
-		cp {input} {output}
+		umi_tools extract -I {input} \
+			--bc-pattern='{params.bc_pattern}' \
+			--extract-method=regex \
+			-S {output} \
+			--log={log}
 		"""
 
 
@@ -112,27 +160,15 @@ rule extract_umi:
 
 rule remove_t:
 	input:
-		f"{RESULTS_DIR}/02_umi_extract/{{sample}}.umi.fastq.gz"
+		f"{RESULTS_DIR}/trim/{{sample}}.umi.fastq.gz"
 	output:
-		f"{RESULTS_DIR}/03_remove_t/{{sample}}.trim2.fastq.gz"
+		f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz"
+	envmodules:
+		MODULES["cutadapt"]
 	shell:
 		"""
-		mkdir -p {RESULTS_DIR}/03_remove_t
-		cp {input} {output}
-		"""
-
-
-# QC
-
-rule fastqc:
-	input:
-		f"{RESULTS_DIR}/03_remove_t/{{sample}}.trim2.fastq.gz"
-	output:
-		f"{RESULTS_DIR}/qc/{{sample}}.fastqc.done.txt"
-	shell:
-		"""
-		mkdir -p {RESULTS_DIR}/qc
-		echo "FASTQC PLACEHOLDER: run FastQC on {input}" > {output}
+		cutadapt --cores $SLURM_CPUS_PER_TASK -g ^T \
+			--discard-untrimmed -o {output} {input}
 		"""
 
 
@@ -147,12 +183,40 @@ rule fastqc:
 # bowtie2-build --threads N - f <reference.fasta.file> <given_index_name>
 
 rule create_contaminant_index:
+	input:
+		rrna=config["rrna_fasta"],
+		trna=config["trna_fasta"],
+		ncrna=config["ncrna_fasta"],
 	output:
-		f"{RESULTS_DIR}/04_filter_contaminants/contaminant_index.done.txt"
+		rrna_1=f"{RESULTS_DIR}/filter_contaminants/rrna.1.bt2",
+		rrna_2=f"{RESULTS_DIR}/filter_contaminants/rrna.2.bt2",
+		rrna_3=f"{RESULTS_DIR}/filter_contaminants/rrna.3.bt2",
+		rrna_4=f"{RESULTS_DIR}/filter_contaminants/rrna.4.bt2",
+		rrna_rev1=f"{RESULTS_DIR}/filter_contaminants/rrna.rev.1.bt2",
+		rrna_rev2=f"{RESULTS_DIR}/filter_contaminants/rrna.rev.2.bt2",
+		trna_1=f"{RESULTS_DIR}/filter_contaminants/trna.1.bt2",
+		trna_2=f"{RESULTS_DIR}/filter_contaminants/trna.2.bt2",
+		trna_3=f"{RESULTS_DIR}/filter_contaminants/trna.3.bt2",
+		trna_4=f"{RESULTS_DIR}/filter_contaminants/trna.4.bt2",
+		trna_rev1=f"{RESULTS_DIR}/filter_contaminants/trna.rev.1.bt2",
+		trna_rev2=f"{RESULTS_DIR}/filter_contaminants/trna.rev.2.bt2",
+		ncrna_1=f"{RESULTS_DIR}/filter_contaminants/ncrna.1.bt2",
+		ncrna_2=f"{RESULTS_DIR}/filter_contaminants/ncrna.2.bt2",
+		ncrna_3=f"{RESULTS_DIR}/filter_contaminants/ncrna.3.bt2",
+		ncrna_4=f"{RESULTS_DIR}/filter_contaminants/ncrna.4.bt2",
+		ncrna_rev1=f"{RESULTS_DIR}/filter_contaminants/ncrna.rev.1.bt2",
+		ncrna_rev2=f"{RESULTS_DIR}/filter_contaminants/ncrna.rev.2.bt2",
+	params:
+		rrna_prefix=f"{RESULTS_DIR}/filter_contaminants/rrna",
+		trna_prefix=f"{RESULTS_DIR}/filter_contaminants/trna",
+		ncrna_prefix=f"{RESULTS_DIR}/filter_contaminants/ncrna"
+	envmodules:
+		MODULES["bowtie2"]
 	shell:
 		"""
-		mkdir -p {RESULTS_DIR}/04_filter_contaminants
-		echo "CONTAMINANT INDEX PLACEHOLDER" > {output}
+		bowtie2-build --threads $SLURM_CPUS_PER_TASK -f {input.rrna} {params.rrna_prefix}
+		bowtie2-build --threads $SLURM_CPUS_PER_TASK -f {input.trna} {params.trna_prefix}
+		bowtie2-build --threads $SLURM_CPUS_PER_TASK -f {input.ncrna} {params.ncrna_prefix}
 		"""
 
 
@@ -171,14 +235,38 @@ rule create_contaminant_index:
 
 rule remove_contaminants:
 	input:
-		fastq=f"{RESULTS_DIR}/03_remove_t/{{sample}}.trim2.fastq.gz",
-		idx=f"{RESULTS_DIR}/04_filter_contaminants/contaminant_index.done.txt",
+		fastq=f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz",
+		rrna_idx=f"{RESULTS_DIR}/filter_contaminants/rrna.1.bt2",
+		trna_idx=f"{RESULTS_DIR}/filter_contaminants/trna.1.bt2",
+		ncrna_idx=f"{RESULTS_DIR}/filter_contaminants/ncrna.1.bt2",
 	output:
-		f"{RESULTS_DIR}/04_filter_contaminants/{{sample}}.clean.fastq.gz"
+		f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz"
+	log:
+		rrna=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.rrna_mapping.log",
+		trna=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.trna_mapping.log",
+		ncrna=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.ncrna_mapping.log"
+	params:
+		rrna_prefix=f"{RESULTS_DIR}/filter_contaminants/rrna",
+		trna_prefix=f"{RESULTS_DIR}/filter_contaminants/trna",
+		ncrna_prefix=f"{RESULTS_DIR}/filter_contaminants/ncrna",
+		mismatches=1,
+		rrna_un=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.norRNA.fastq.gz",
+		trna_un=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.norRNA_notRNA.fastq.gz"
+	envmodules:
+		MODULES["bowtie2"]
 	shell:
 		"""
-		mkdir -p {RESULTS_DIR}/04_filter_contaminants
-		cp {input.fastq} {output}
+		bowtie2 --threads $SLURM_CPUS_PER_TASK -N {params.mismatches} --no-1mm-upfront -q \
+			-U {input.fastq} --un-gz {params.rrna_un} -x {params.rrna_prefix} \
+			-S /dev/null 2> {log.rrna}
+
+		bowtie2 --threads $SLURM_CPUS_PER_TASK -N {params.mismatches} --no-1mm-upfront -q \
+			-U {params.rrna_un} --un-gz {params.trna_un} -x {params.trna_prefix} \
+			-S /dev/null 2> {log.trna}
+
+		bowtie2 --threads $SLURM_CPUS_PER_TASK -N {params.mismatches} --no-1mm-upfront -q \
+			-U {params.trna_un} --un-gz {output} -x {params.ncrna_prefix} \
+			-S /dev/null 2> {log.ncrna}
 		"""
 
 
@@ -193,25 +281,45 @@ rule remove_contaminants:
 #   --genomeSAindexNbases <calculated size> --sjdbGTFfile <location_of_gtf_file>
 
 rule create_star_index:
+	input:
+		fasta=config["reference_fasta"],
+		gtf=config["reference_gtf"],
 	output:
-		f"{RESULTS_DIR}/05_star/star_index.done.txt"
+		f"{RESULTS_DIR}/star/index/SA"
+	params:
+		genome_dir=f"{RESULTS_DIR}/star/index",
+		sa_index_n_bases=14
+	envmodules:
+		MODULES["star"]
 	shell:
 		"""
-		mkdir -p {RESULTS_DIR}/05_star
-		echo "STAR INDEX PLACEHOLDER" > {output}
+		STAR --runMode genomeGenerate --runThreadN $SLURM_CPUS_PER_TASK \
+			--genomeDir {params.genome_dir} \
+			--genomeFastaFiles {input.fasta} \
+			--genomeSAindexNbases {params.sa_index_n_bases} \
+			--sjdbGTFfile {input.gtf}
 		"""
 
 
 rule star_alignment:
 	input:
-		fastq=f"{RESULTS_DIR}/04_filter_contaminants/{{sample}}.clean.fastq.gz",
-		idx=f"{RESULTS_DIR}/05_star/star_index.done.txt",
+		fastq=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz",
+		idx=f"{RESULTS_DIR}/star/index/SA",
 	output:
-		f"{RESULTS_DIR}/05_star/{{sample}}.Aligned.sortedByCoord.out.bam"
+		f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam"
+	params:
+		genome_dir=f"{RESULTS_DIR}/star/index",
+		prefix=lambda wc: f"{RESULTS_DIR}/star/{wc.sample}."
+	envmodules:
+		MODULES["star"]
 	shell:
 		"""
-		mkdir -p {RESULTS_DIR}/05_star
-		printf "BAM PLACEHOLDER for %s\n" {wildcards.sample} > {output}
+		STAR --runThreadN $SLURM_CPUS_PER_TASK \
+			--genomeDir {params.genome_dir} \
+			--readFilesIn {input.fastq} \
+			--readFilesCommand zcat \
+			--outSAMtype BAM SortedByCoordinate \
+			--outFileNamePrefix {params.prefix}
 		"""
 
 
@@ -227,18 +335,46 @@ rule star_alignment:
 
 rule ribowaltz:
 	input:
-		f"{RESULTS_DIR}/05_star/{{sample}}.Aligned.sortedByCoord.out.bam"
+		f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam"
 	output:
-		f"{RESULTS_DIR}/06_ribowaltz/{{sample}}.riboWaltz.done.txt"
+		f"{RESULTS_DIR}/ribowaltz/{{sample}}.riboWaltz.done.txt"
+	params:
+		gtf=config["reference_gtf"]
+	envmodules:
+		MODULES["r"]
 	shell:
 		"""
-		mkdir -p {RESULTS_DIR}/06_ribowaltz
-		echo "RiboWaltz PLACEHOLDER: analyze {input}" > {output}
+		Rscript -e 'args <- commandArgs(trailingOnly=TRUE); \
+			bam <- args[1]; gtf <- args[2]; out <- args[3]; \
+			cat("riboWaltz input BAM:", bam, "\\n", file=out); \
+			cat("riboWaltz annotation GTF:", gtf, "\\n", file=out, append=TRUE)' \
+			{input} {params.gtf} {output}
 		"""
 
+
+# ---------------------------------------------------------------------------
+# MultiQC: Aggregate QC results
+# ---------------------------------------------------------------------------
+
+rule multiqc:
+	input:
+		expand(f"{RESULTS_DIR}/qc/{{sample}}_fastqc.html", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/qc/{{sample}}_fastqc.zip", sample=SAMPLE_NAMES),
+	output:
+		f"{RESULTS_DIR}/qc/multiqc_report.html"
+	params:
+		outdir=f"{RESULTS_DIR}/qc"
+	envmodules:
+		MODULES["multiqc"]
+	shell:
+		"""
+		multiqc {params.outdir} -o {params.outdir} -n multiqc_report.html
+		"""
+
+
 # Counts
-#
+
 # UMI-tools dedup can be used after alignment to remove duplicates based on
 # the mapping coordinate and the UMI attached to the read name
-#
+
 # Differentially Translated Genes - compare to DEGs

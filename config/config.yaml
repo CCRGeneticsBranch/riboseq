@@ -12,7 +12,11 @@ results_dir: WORKDIR/results
 # Optional references for future production rules
 reference_fasta: "/path/to/reference/genome.fa"
 reference_gtf: "/path/to/reference/annotation.gtf"
-contaminant_fasta: "/path/to/contaminants/contaminants.fa"
+
+# Contaminant references used for sequential filtering
+rrna_fasta: "/path/to/contaminants/rrna.fa"
+trna_fasta: "/path/to/contaminants/trna.fa"
+ncrna_fasta: "/path/to/contaminants/ncrna.fa"
 
 # HPC env modules (placeholder values, adjust on cluster)
 modules:
@@ -21,5 +25,5 @@ modules:
   fastqc: "fastqc"
   bowtie2: "bowtie2"
   star: "star"
-  samtools: "samtools"
   r: "R"
+  multiqc: "multiqc"
