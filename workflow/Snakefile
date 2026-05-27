@@ -62,8 +62,9 @@ rule all:
 		expand(f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz", sample=SAMPLE_NAMES),
 		expand(f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz", sample=SAMPLE_NAMES),
 		expand(f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/ribowaltz/{{sample}}.riboWaltz.done.txt", sample=SAMPLE_NAMES),
-		f"{RESULTS_DIR}/qc/multiqc_report.html",
+		f"{RESULTS_DIR}/qc/multiqc_report.html"
+        #expand(f"{RESULTS_DIR}/ribowaltz/{{sample}}.riboWaltz.done.txt", sample=SAMPLE_NAMES),
+		
 
 
 # QC
@@ -113,15 +114,12 @@ rule remove_linker:
 		lambda wc: f"{RAW_DATA_DIR}/{SAMPLES[wc.sample]}"
 	output:
 		f"{RESULTS_DIR}/trim/{{sample}}.trim.fastq.gz"
-	params:
-		adapter="TCTCCTTGCATAATCACCAACC",
-		min_length=29,
 	envmodules:
 		MODULES["cutadapt"]
 	shell:
 		"""
-		cutadapt --cores $SLURM_CPUS_PER_TASK --minimum-length {params.min_length} \
-			-a {params.adapter} --discard-untrimmed \
+		cutadapt --cores $SLURM_CPUS_PER_TASK --minimum-length 29 \
+			-a TCTCCTTGCATAATCACCAACC --discard-untrimmed \
 			-o {output} {input}
 		"""
 
@@ -140,14 +138,12 @@ rule extract_umi:
 		f"{RESULTS_DIR}/trim/{{sample}}.umi.fastq.gz"
 	log:
 		f"{RESULTS_DIR}/trim/{{sample}}.umi_extract.log"
-	params:
-		bc_pattern="^(?P<umi_1>.{{4}}).+(?P<umi_2>.{{4}})$"
 	envmodules:
 		MODULES["umi_tools"]
 	shell:
 		"""
 		umi_tools extract -I {input} \
-			--bc-pattern='{params.bc_pattern}' \
+			--bc-pattern='^(?P<umi_1>.{{4}}).+(?P<umi_2>.{{4}})$' \
 			--extract-method=regex \
 			-S {output} \
 			--log={log}
@@ -173,12 +169,11 @@ rule remove_t:
 
 
 # ---------------------------------------------------------------------------
-# Step E3: Filtering rRNA, tRNA and ncRNA
+# Step E3: Filtering rRNA, tRNA and snRNA
 # ---------------------------------------------------------------------------
 
-# Create a FASTA containing contaminating sequences from your sample
-# To build bowtie2 indexes fasta files of tRNAs, rRNAs and snRNAs or ncRNAs
-# are necessary (https://rnacentral.org/)
+# To build bowtie2 indexes, fasta files of contaminating sequences
+# (tRNAs, rRNAs and snRNAs or ncRNAs) are necessary (https://rnacentral.org/)
 #
 # bowtie2-build --threads N - f <reference.fasta.file> <given_index_name>
 
@@ -186,37 +181,37 @@ rule create_contaminant_index:
 	input:
 		rrna=config["rrna_fasta"],
 		trna=config["trna_fasta"],
-		ncrna=config["ncrna_fasta"],
+		snrna=config["snrna_fasta"],
 	output:
-		rrna_1=f"{RESULTS_DIR}/filter_contaminants/rrna.1.bt2",
-		rrna_2=f"{RESULTS_DIR}/filter_contaminants/rrna.2.bt2",
-		rrna_3=f"{RESULTS_DIR}/filter_contaminants/rrna.3.bt2",
-		rrna_4=f"{RESULTS_DIR}/filter_contaminants/rrna.4.bt2",
-		rrna_rev1=f"{RESULTS_DIR}/filter_contaminants/rrna.rev.1.bt2",
-		rrna_rev2=f"{RESULTS_DIR}/filter_contaminants/rrna.rev.2.bt2",
-		trna_1=f"{RESULTS_DIR}/filter_contaminants/trna.1.bt2",
-		trna_2=f"{RESULTS_DIR}/filter_contaminants/trna.2.bt2",
-		trna_3=f"{RESULTS_DIR}/filter_contaminants/trna.3.bt2",
-		trna_4=f"{RESULTS_DIR}/filter_contaminants/trna.4.bt2",
-		trna_rev1=f"{RESULTS_DIR}/filter_contaminants/trna.rev.1.bt2",
-		trna_rev2=f"{RESULTS_DIR}/filter_contaminants/trna.rev.2.bt2",
-		ncrna_1=f"{RESULTS_DIR}/filter_contaminants/ncrna.1.bt2",
-		ncrna_2=f"{RESULTS_DIR}/filter_contaminants/ncrna.2.bt2",
-		ncrna_3=f"{RESULTS_DIR}/filter_contaminants/ncrna.3.bt2",
-		ncrna_4=f"{RESULTS_DIR}/filter_contaminants/ncrna.4.bt2",
-		ncrna_rev1=f"{RESULTS_DIR}/filter_contaminants/ncrna.rev.1.bt2",
-		ncrna_rev2=f"{RESULTS_DIR}/filter_contaminants/ncrna.rev.2.bt2",
+		rrna_1=f"{RESULTS_DIR}/filter_contaminants/index/rrna.1.bt2",
+		rrna_2=f"{RESULTS_DIR}/filter_contaminants/index/rrna.2.bt2",
+		rrna_3=f"{RESULTS_DIR}/filter_contaminants/index/rrna.3.bt2",
+		rrna_4=f"{RESULTS_DIR}/filter_contaminants/index/rrna.4.bt2",
+		rrna_rev1=f"{RESULTS_DIR}/filter_contaminants/index/rrna.rev.1.bt2",
+		rrna_rev2=f"{RESULTS_DIR}/filter_contaminants/index/rrna.rev.2.bt2",
+		trna_1=f"{RESULTS_DIR}/filter_contaminants/index/trna.1.bt2",
+		trna_2=f"{RESULTS_DIR}/filter_contaminants/index/trna.2.bt2",
+		trna_3=f"{RESULTS_DIR}/filter_contaminants/index/trna.3.bt2",
+		trna_4=f"{RESULTS_DIR}/filter_contaminants/index/trna.4.bt2",
+		trna_rev1=f"{RESULTS_DIR}/filter_contaminants/index/trna.rev.1.bt2",
+		trna_rev2=f"{RESULTS_DIR}/filter_contaminants/index/trna.rev.2.bt2",
+		snrna_1=f"{RESULTS_DIR}/filter_contaminants/index/snrna.1.bt2",
+		snrna_2=f"{RESULTS_DIR}/filter_contaminants/index/snrna.2.bt2",
+		snrna_3=f"{RESULTS_DIR}/filter_contaminants/index/snrna.3.bt2",
+		snrna_4=f"{RESULTS_DIR}/filter_contaminants/index/snrna.4.bt2",
+		snrna_rev1=f"{RESULTS_DIR}/filter_contaminants/index/snrna.rev.1.bt2",
+		snrna_rev2=f"{RESULTS_DIR}/filter_contaminants/index/snrna.rev.2.bt2",
 	params:
-		rrna_prefix=f"{RESULTS_DIR}/filter_contaminants/rrna",
-		trna_prefix=f"{RESULTS_DIR}/filter_contaminants/trna",
-		ncrna_prefix=f"{RESULTS_DIR}/filter_contaminants/ncrna"
+		rrna_prefix=f"{RESULTS_DIR}/filter_contaminants/index/rrna",
+		trna_prefix=f"{RESULTS_DIR}/filter_contaminants/index/trna",
+		snrna_prefix=f"{RESULTS_DIR}/filter_contaminants/index/snrna"
 	envmodules:
 		MODULES["bowtie2"]
 	shell:
 		"""
 		bowtie2-build --threads $SLURM_CPUS_PER_TASK -f {input.rrna} {params.rrna_prefix}
 		bowtie2-build --threads $SLURM_CPUS_PER_TASK -f {input.trna} {params.trna_prefix}
-		bowtie2-build --threads $SLURM_CPUS_PER_TASK -f {input.ncrna} {params.ncrna_prefix}
+		bowtie2-build --threads $SLURM_CPUS_PER_TASK -f {input.snrna} {params.snrna_prefix}
 		"""
 
 
@@ -231,24 +226,24 @@ rule create_contaminant_index:
 # bowtie2 --threads N -N 1 --no-1mm-upfront -q <norRNA.fastq.gz> \
 #   --un=<norRNA_notRNA.fastq.gz> -x <tRNA_bowtie_index>
 # bowtie2 --threads N -N 1 --no-1mm-upfront -q <norRNA_notRNA.fastq.gz> \
-#   --un=<norRNA_notRNA_noncRNA.fastq.gz> -x <ncRNA_bowtie_index>
+#   --un=<norRNA_notRNA_nonsnRNA.fastq.gz> -x <snRNA_bowtie_index>
 
 rule remove_contaminants:
 	input:
 		fastq=f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz",
-		rrna_idx=f"{RESULTS_DIR}/filter_contaminants/rrna.1.bt2",
-		trna_idx=f"{RESULTS_DIR}/filter_contaminants/trna.1.bt2",
-		ncrna_idx=f"{RESULTS_DIR}/filter_contaminants/ncrna.1.bt2",
+		rrna_idx=f"{RESULTS_DIR}/filter_contaminants/index/rrna.1.bt2",
+		trna_idx=f"{RESULTS_DIR}/filter_contaminants/index/trna.1.bt2",
+		snrna_idx=f"{RESULTS_DIR}/filter_contaminants/index/snrna.1.bt2",
 	output:
 		f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz"
 	log:
 		rrna=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.rrna_mapping.log",
 		trna=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.trna_mapping.log",
-		ncrna=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.ncrna_mapping.log"
+		snrna=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.snrna_mapping.log"
 	params:
-		rrna_prefix=f"{RESULTS_DIR}/filter_contaminants/rrna",
-		trna_prefix=f"{RESULTS_DIR}/filter_contaminants/trna",
-		ncrna_prefix=f"{RESULTS_DIR}/filter_contaminants/ncrna",
+		rrna_prefix=f"{RESULTS_DIR}/filter_contaminants/index/rrna",
+		trna_prefix=f"{RESULTS_DIR}/filter_contaminants/index/trna",
+		snrna_prefix=f"{RESULTS_DIR}/filter_contaminants/index/snrna",
 		mismatches=1,
 		rrna_un=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.norRNA.fastq.gz",
 		trna_un=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.norRNA_notRNA.fastq.gz"
@@ -265,8 +260,8 @@ rule remove_contaminants:
 			-S /dev/null 2> {log.trna}
 
 		bowtie2 --threads $SLURM_CPUS_PER_TASK -N {params.mismatches} --no-1mm-upfront -q \
-			-U {params.trna_un} --un-gz {output} -x {params.ncrna_prefix} \
-			-S /dev/null 2> {log.ncrna}
+			-U {params.trna_un} --un-gz {output} -x {params.snrna_prefix} \
+			-S /dev/null 2> {log.snrna}
 		"""
 
 
@@ -288,7 +283,6 @@ rule create_star_index:
 		f"{RESULTS_DIR}/star/index/SA"
 	params:
 		genome_dir=f"{RESULTS_DIR}/star/index",
-		sa_index_n_bases=14
 	envmodules:
 		MODULES["star"]
 	shell:
@@ -296,7 +290,7 @@ rule create_star_index:
 		STAR --runMode genomeGenerate --runThreadN $SLURM_CPUS_PER_TASK \
 			--genomeDir {params.genome_dir} \
 			--genomeFastaFiles {input.fasta} \
-			--genomeSAindexNbases {params.sa_index_n_bases} \
+			--genomeSAindexNbases 14 \
 			--sjdbGTFfile {input.gtf}
 		"""
 
@@ -320,6 +314,28 @@ rule star_alignment:
 			--readFilesCommand zcat \
 			--outSAMtype BAM SortedByCoordinate \
 			--outFileNamePrefix {params.prefix}
+		"""
+
+
+# ---------------------------------------------------------------------------
+# MultiQC: Aggregate QC results
+# ---------------------------------------------------------------------------
+
+rule multiqc:
+	input:
+		expand(f"{RESULTS_DIR}/qc/{{sample}}_fastqc.html", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES)
+	output:
+		f"{RESULTS_DIR}/qc/multiqc_report.html"
+	params:
+		outdir=f"{RESULTS_DIR}/qc"
+	envmodules:
+		MODULES["multiqc"]
+	shell:
+		"""
+		multiqc {RESULTS_DIR} -o {params.outdir} -n multiqc_report.html
 		"""
 
 
@@ -352,29 +368,9 @@ rule ribowaltz:
 		"""
 
 
-# ---------------------------------------------------------------------------
-# MultiQC: Aggregate QC results
-# ---------------------------------------------------------------------------
-
-rule multiqc:
-	input:
-		expand(f"{RESULTS_DIR}/qc/{{sample}}_fastqc.html", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/qc/{{sample}}_fastqc.zip", sample=SAMPLE_NAMES),
-	output:
-		f"{RESULTS_DIR}/qc/multiqc_report.html"
-	params:
-		outdir=f"{RESULTS_DIR}/qc"
-	envmodules:
-		MODULES["multiqc"]
-	shell:
-		"""
-		multiqc {params.outdir} -o {params.outdir} -n multiqc_report.html
-		"""
-
-
-# Counts
-
 # UMI-tools dedup can be used after alignment to remove duplicates based on
 # the mapping coordinate and the UMI attached to the read name
+
+# Counts
 
 # Differentially Translated Genes - compare to DEGs

@@ -1,11 +1,35 @@
 # Cluster resources per rule
 __default__:
     gres: lscratch:500
-    mem: 2g
-    threads: 4
-    time: 00-01:00:00
+    mem: 1g
+    threads: 2
+    time: 00-00:30:00
     partition: norm
     name: "{rule}.{wildcards}"
     output: "logs/{rule}.${{SLURM_JOBID}}.%j.{wildcards}.out"
     error: "logs/{rule}.${{SLURM_JOBID}}.%j.{wildcards}.err"
 
+fastqc:
+    mem: 2g
+
+remove_linker:
+    threads: 6
+
+extract_umi:
+    time: 00-01:00:00
+
+remove_t:
+    threads: 6
+
+remove_contaminants:
+    threads: 32
+    time: 00-01:00:00
+
+create_star_index:
+    threads: 32
+    mem: 96g
+    time: 00-02:00:00
+
+star_alignment:
+    threads: 32
+    mem: 48g
