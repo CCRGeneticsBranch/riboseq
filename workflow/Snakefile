@@ -62,10 +62,10 @@ rule all:
 		expand(f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz", sample=SAMPLE_NAMES),
 		expand(f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz", sample=SAMPLE_NAMES),
 		expand(f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/star/{{sample}}.dedup.bam", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/star/{{sample}}.dedup.transcriptome.bam", sample=SAMPLE_NAMES),
 		f"{RESULTS_DIR}/qc/multiqc_report.html"
         #expand(f"{RESULTS_DIR}/ribowaltz/{{sample}}.riboWaltz.done.txt", sample=SAMPLE_NAMES),
-		
-
 
 # QC
 
@@ -300,12 +300,14 @@ rule star_alignment:
 		fastq=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz",
 		idx=f"{RESULTS_DIR}/star/index/SA",
 	output:
-		f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam"
+		genome_bam=f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam",
+		txome_bam=f"{RESULTS_DIR}/star/{{sample}}.Aligned.toTranscriptome.out.bam"
 	params:
 		genome_dir=f"{RESULTS_DIR}/star/index",
 		prefix=lambda wc: f"{RESULTS_DIR}/star/{wc.sample}."
 	envmodules:
-		MODULES["star"]
+		MODULES["star"],
+		MODULES["samtools"]
 	shell:
 		"""
 		STAR --runThreadN $SLURM_CPUS_PER_TASK \
@@ -313,9 +315,56 @@ rule star_alignment:
 			--readFilesIn {input.fastq} \
 			--readFilesCommand zcat \
 			--outSAMtype BAM SortedByCoordinate \
+			--quantMode TranscriptomeSAM \
 			--outFileNamePrefix {params.prefix}
+
+		samtools index {output.genome_bam}
 		"""
 
+# Deduplicate reads using UMI and mapping coordinates
+
+rule dedup_umi:
+	input:
+		bam = f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam",
+	output:	
+		bam = f"{RESULTS_DIR}/star/{{sample}}.dedup.bam",
+		stats = f"{RESULTS_DIR}/star/{{sample}}.dedup.stats"
+	envmodules:
+		MODULES["umi_tools"]
+	shell:
+		"""
+		umi_tools dedup -I {input.bam} --output-stats={output.stats} -S {output.bam}
+		"""
+
+
+# Filter transcriptome BAM to retain only reads that survived UMI deduplication.
+
+rule filter_transcriptome_bam:
+	input:
+		dedup_bam = f"{RESULTS_DIR}/star/{{sample}}.dedup.bam",
+		txome_bam = f"{RESULTS_DIR}/star/{{sample}}.Aligned.toTranscriptome.out.bam"
+	output:
+		f"{RESULTS_DIR}/star/{{sample}}.dedup.transcriptome.bam"
+	envmodules:
+		MODULES["samtools"]
+	shell:
+		"""
+		# Extract read names surviving deduplication
+		samtools view -F 4 {input.dedup_bam} | cut -f1 | sort -u > {output}.names.txt
+
+		# Sort transcriptome BAM by name for picard/samtools filtering
+		samtools sort -n -@ $SLURM_CPUS_PER_TASK \
+			-o {output}.namesorted.bam {input.txome_bam}
+
+		# Retain only reads whose names are in the dedup set
+		samtools view -h {output}.namesorted.bam \
+			| awk 'substr($1,1,1)=="@" || (NR==FNR{{names[$1]=1; next}} $1 in names)' \
+			  {output}.names.txt - \
+			| samtools sort -@ $SLURM_CPUS_PER_TASK -o {output}
+		samtools index {output}
+
+		rm -f {output}.names.txt {output}.namesorted.bam
+		"""	
 
 # ---------------------------------------------------------------------------
 # MultiQC: Aggregate QC results
@@ -326,7 +375,8 @@ rule multiqc:
 		expand(f"{RESULTS_DIR}/qc/{{sample}}_fastqc.html", sample=SAMPLE_NAMES),
 		expand(f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz", sample=SAMPLE_NAMES),
 		expand(f"{RESULTS_DIR}/filter_contaminants/{{sample}}.clean.fastq.gz", sample=SAMPLE_NAMES),
-		expand(f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES)
+		expand(f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES),
+		expand(f"{RESULTS_DIR}/star/{{sample}}.dedup.stats", sample=SAMPLE_NAMES),
 	output:
 		f"{RESULTS_DIR}/qc/multiqc_report.html"
 	params:
@@ -351,7 +401,8 @@ rule multiqc:
 
 rule ribowaltz:
 	input:
-		f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam"
+		bam = f"{RESULTS_DIR}/star/{{sample}}.dedup.transcriptome.bam",
+		bai = f"{RESULTS_DIR}/star/{{sample}}.dedup.transcriptome.bam.bai"
 	output:
 		f"{RESULTS_DIR}/ribowaltz/{{sample}}.riboWaltz.done.txt"
 	params:
@@ -360,17 +411,12 @@ rule ribowaltz:
 		MODULES["r"]
 	shell:
 		"""
-		Rscript -e 'args <- commandArgs(trailingOnly=TRUE); \
-			bam <- args[1]; gtf <- args[2]; out <- args[3]; \
-			cat("riboWaltz input BAM:", bam, "\\n", file=out); \
-			cat("riboWaltz annotation GTF:", gtf, "\\n", file=out, append=TRUE)' \
-			{input} {params.gtf} {output}
+		Rscript workflow/scripts/ribowaltz.R \
+			--bam {input.bam} \
+			--gtf {params.gtf} \
+			--outdir {params.outdir} \
+			--sample {params.sample}
 		"""
 
-
-# UMI-tools dedup can be used after alignment to remove duplicates based on
-# the mapping coordinate and the UMI attached to the read name
-
 # Counts
-
 # Differentially Translated Genes - compare to DEGs

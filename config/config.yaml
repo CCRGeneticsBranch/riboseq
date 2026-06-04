@@ -27,3 +27,4 @@ modules:
   star: "STAR"
   r: "R"
   multiqc: "multiqc"
+  samtools: "samtools"

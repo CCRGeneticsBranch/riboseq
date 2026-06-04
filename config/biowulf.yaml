@@ -33,3 +33,7 @@ create_star_index:
 star_alignment:
     threads: 32
     mem: 48g
+
+dedup_umi:
+    mem: 24g
+    time: 00-02:00:00
