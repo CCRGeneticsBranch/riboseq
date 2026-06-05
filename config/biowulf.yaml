@@ -35,5 +35,9 @@ star_alignment:
     mem: 48g
 
 dedup_umi:
-    mem: 24g
+    mem: 12g
     time: 00-02:00:00
+
+filter_transcriptome_bam:
+    threads: 8
+    mem: 12g
