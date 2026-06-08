@@ -41,3 +41,6 @@ dedup_umi:
 filter_transcriptome_bam:
     threads: 8
     mem: 12g
+
+ribowaltz:
+    mem: 48g

@@ -9,6 +9,7 @@ import os
 RAW_DATA_DIR = config["raw_data_dir"]
 RESULTS_DIR = config["results_dir"]
 SAMPLES_TSV = config["samples"]
+SCRIPTS_DIR = config["scripts_dir"]
 MODULES = config["modules"]
 
 
@@ -64,8 +65,8 @@ rule all:
 		expand(f"{RESULTS_DIR}/star/{{sample}}.Aligned.sortedByCoord.out.bam", sample=SAMPLE_NAMES),
 		expand(f"{RESULTS_DIR}/star/{{sample}}.dedup.bam", sample=SAMPLE_NAMES),
 		expand(f"{RESULTS_DIR}/star/{{sample}}.dedup.transcriptome.bam", sample=SAMPLE_NAMES),
-		f"{RESULTS_DIR}/qc/multiqc_report.html"
-        #expand(f"{RESULTS_DIR}/ribowaltz/{{sample}}.riboWaltz.done.txt", sample=SAMPLE_NAMES),
+		f"{RESULTS_DIR}/qc/multiqc_report.html",
+		expand(f"{RESULTS_DIR}/ribowaltz/{{sample}}.cds_coverage.tsv", sample=SAMPLE_NAMES),
 
 # QC
 
@@ -398,15 +399,19 @@ rule ribowaltz:
 	input:
 		bam = f"{RESULTS_DIR}/star/{{sample}}.dedup.transcriptome.bam",
 	output:
-		f"{RESULTS_DIR}/ribowaltz/{{sample}}.riboWaltz.done.txt"
+		f"{RESULTS_DIR}/ribowaltz/{{sample}}.cds_coverage.tsv"
 	params:
 		gtf=config["reference_gtf"],
+		transcript_fasta=config["transcript_fasta"],
+		ribowaltz_rmd=f"{SCRIPTS_DIR}/ribowaltz.Rmd",
+		linked_bam=f"{RESULTS_DIR}/ribowaltz/{{sample}}.dedup.transcriptome.bam",
 	envmodules:
 		MODULES["r"]
 	shell:
 		"""
-		Rscript -e "rmarkdown::render('workflow/scripts/ribowaltz.Rmd', params=list(bam='{input.bam}', gtf='{params.gtf}'))"
+		mkdir -p {RESULTS_DIR}/ribowaltz
+		ln -sfn {input.bam} {params.linked_bam}
+		Rscript -e "rmarkdown::render('{params.ribowaltz_rmd}', params=list(bam='{params.linked_bam}', gtf='{params.gtf}', transcript_fasta='{params.transcript_fasta}', cds_coverage_out='{output}'))"
 		"""
 
-# Counts
 # Differentially Translated Genes - compare to DEGs

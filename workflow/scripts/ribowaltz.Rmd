@@ -1,0 +1,206 @@
+---
+title: "RiboWaltz preprocessing"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    keep_md: true
+editor_options:
+  chunk_output_type: console
+params:
+  bam: null
+  gtf: null
+  transcript_fasta: null
+  cds_coverage_out: null
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r get params}
+library(riboWaltz)
+library(data.table)
+
+bam_file <- params$bam
+gtf_file <- params$gtf
+transcript_fasta <- params$transcript_fasta
+cds_coverage_out <- params$cds_coverage_out
+
+if (is.null(bam_file) || is.null(gtf_file) ||
+    is.null(transcript_fasta) || is.null(cds_coverage_out) ||
+    !nzchar(bam_file) || !nzchar(gtf_file) || !nzchar(transcript_fasta) || !nzchar(cds_coverage_out)) {
+  stop("Missing required params: bam, gtf, transcript_fasta, cds_coverage_out", call. = FALSE)
+}
+
+if (!file.exists(bam_file)) {
+  stop(paste("BAM file not found:", bam_file), call. = FALSE)
+}
+
+if (!file.exists(gtf_file)) {
+  stop(paste("GTF file not found:", gtf_file), call. = FALSE)
+}
+
+if (!file.exists(transcript_fasta)) {
+  stop(paste("Transcript FASTA not found:", transcript_fasta), call. = FALSE)
+}
+
+sample_name <- sub(".dedup.transcriptome.bam$", "", basename(bam_file))
+```
+
+Create transcriptome annotation from GTF
+
+Recapitulates riboWaltz create_annotation() function with updated package requirements
+
+```{r create annotation}
+make_ribowaltz_annotation <- function(gtf_path) {
+  # Build TxDb from GTF
+  txdb <- txdbmaker::makeTxDbFromGFF(
+    file = gtf_path,
+    format = "gtf"
+  )
+
+  # Extract transcript parts
+  exon <- GenomicFeatures::exonsBy(txdb, by = "tx", use.names = TRUE)
+  utr5 <- GenomicFeatures::fiveUTRsByTranscript(txdb, use.names = TRUE)
+  cds  <- GenomicFeatures::cdsBy(txdb, by = "tx", use.names = TRUE)
+  utr3 <- GenomicFeatures::threeUTRsByTranscript(txdb, use.names = TRUE)
+
+  # Convert to data.table
+  exon_dt <- as.data.table(exon[unique(names(exon))])
+  utr5_dt <- as.data.table(utr5[unique(names(utr5))])
+  cds_dt  <- as.data.table(cds[unique(names(cds))])
+  utr3_dt <- as.data.table(utr3[unique(names(utr3))])
+
+  # Summarize lengths per transcript
+  anno_df <- exon_dt[, list(l_tr = sum(width)), by = list(transcript = group_name)]
+  l_utr5 <- utr5_dt[, list(l_utr5 = sum(width)), by = list(transcript = group_name)]
+  l_cds <- cds_dt[, list(l_cds = sum(width)), by = list(transcript = group_name)]
+  l_utr3 <- utr3_dt[, list(l_utr3 = sum(width)), by = list(transcript = group_name)]
+  
+  merge_allx <- function(x, y) merge(x, y, all.x=TRUE)
+  anno_df  <-  Reduce(merge_allx, list(anno_df, l_utr5, l_cds, l_utr3))
+  anno_df[is.na(anno_df)] <- 0
+  
+  return(anno_df)
+}
+
+annotation_dt <- make_ribowaltz_annotation(gtf_file)
+```
+
+Create read list from transcriptome-aligned bam and annotation table
+
+```{r read bam}
+reads_list <- bamtolist(
+  bamfolder = dirname(bam_file),
+  annotation = annotation_dt,
+  transcript_align = TRUE,
+  name_samples = setNames(sample_name,sub(".bam$", "", basename(bam_file)))
+)
+
+if (!length(reads_list)) {
+  stop("bamtolist returned no samples", call. = FALSE)
+}
+```
+
+Plot read length
+
+```{r plot read length}
+length_dist <- rlength_distr(reads_list, sample = sample_name, colour = "#333f50")
+length_dist[[paste0("plot_", sample_name)]]
+```
+
+Plot read extremities
+
+```{r plot read extremities}
+ends_heatmap <- rends_heat(reads_list, annotation_dt,
+                           sample = sample_name, cl = 95,
+                           colour = "#333f50")
+ends_heatmap[[paste0("plot_", sample_name)]]
+```
+
+Filter reads by lengths satisfying periodicity threshold
+
+```{r filter periodicity}
+filtered_list <- length_filter(data = reads_list, sample = sample_name,
+                               length_filter_mode = "periodicity",
+                               periodicity_threshold = 50)
+```
+
+Calculate P-site offsets and create list of P-site positions
+
+```{r psite}
+psite_offset <- psite(filtered_list, flanking = 6, extremity = "auto")
+reads_psite_list <- psite_info(filtered_list, psite_offset)
+```
+
+Number of P-sites per transcript / triplet
+
+```{r cds coverage}
+cds_coverage <- cds_coverage(reads_psite_list, annotation_dt)
+codon_coverage <- codon_coverage(reads_psite_list, annotation_dt, 
+                                 sample = sample_name, psite = FALSE)
+```
+
+Enrichment of reads in CDS
+
+```{r cds enrichment}
+psite_per_region <- region_psite(reads_psite_list, annotation_dt,
+                 sample = sample_name,
+                 colour = c("#333f50", "gray70", "#39827c"))
+psite_per_region[["plot"]]
+```
+
+Codon periodicity on CDS (% of P-sites in 3 possible reading frames) - overall and split by read length
+
+```{r codon periodicity}
+frames <- frame_psite(reads_psite_list, annotation_dt,
+                       sample = sample_name,
+                       region = "all",
+                       colour = c("#333f50", "#39827c"))
+frames[[paste0("plot_",sample_name)]]
+ 
+frames_stratified <- frame_psite_length(reads_psite_list, annotation_dt,
+                                         sample = sample_name,
+                                         region = "all",
+                                         colour = "#333f50")
+frames_stratified[[paste0("plot_",sample_name)]]
+```
+
+Trinucleotide periodicity along coding sequences
+
+```{r trinucleotide periodicity}
+metaprofile <- metaprofile_psite(reads_psite_list, annotation_dt,
+                 sample = sample_name,
+                 colour = "#333f50")
+metaprofile[[paste0("plot_", sample_name)]]
+```
+
+Codon usage (frequency of in-frame P-sites along coding sequences)
+
+```{r codon usage}
+cu_barplot <- codon_usage_psite(
+  reads_psite_list,
+  annotation_dt,
+  sample = sample_name,
+  fastapath = transcript_fasta,
+  fasta_genome = FALSE,
+  refseq_sep = "|"
+)
+cu_barplot[[paste0("plot_", sample_name)]]
+```
+
+Write CDS coverage table
+
+```{r write cds coverage}
+write.table(
+  cds_coverage,
+  file = cds_coverage_out,
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = TRUE
+)
+```
