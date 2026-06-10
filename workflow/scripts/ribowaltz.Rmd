@@ -1,12 +1,11 @@
 ---
-title: "RiboWaltz preprocessing"
+title: "riboWaltz: P-site identification and QC"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output:
   html_document:
     toc: true
     toc_float: true
     code_folding: hide
-    keep_md: true
 editor_options:
   chunk_output_type: console
 params:
@@ -17,8 +16,17 @@ params:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, fig.width = 10, fig.height = 7)
 ```
+
+RiboLace data has been preprocessed following the recommended protocol, including: read trimming, rRNA/tRNA/snRNA contaminant removal, STAR genome/transcriptome alignment, and UMI-based deduplication.
+
+Implements the riboWaltz package for P-site identification and QC
+
++ https://github.com/LabTranslationalArchitectomics/riboWaltz
++ https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1006169
+
+For downstream analysis, the ribosome P-site must be identified in each ribosome protected fragment (RPF = read). 
 
 ```{r get params}
 library(riboWaltz)
@@ -50,9 +58,9 @@ if (!file.exists(transcript_fasta)) {
 sample_name <- sub(".dedup.transcriptome.bam$", "", basename(bam_file))
 ```
 
-Create transcriptome annotation from GTF
+# Load transcriptome
 
-Recapitulates riboWaltz create_annotation() function with updated package requirements
+Creates a transcript annotation table with UTR and CDS lengths from the input GTF (i.e., riboWaltz::create_annotation() with updated package requirements)
 
 ```{r create annotation}
 make_ribowaltz_annotation <- function(gtf_path) {
@@ -90,7 +98,9 @@ make_ribowaltz_annotation <- function(gtf_path) {
 annotation_dt <- make_ribowaltz_annotation(gtf_file)
 ```
 
-Create read list from transcriptome-aligned bam and annotation table
+# Load preprocessed RiboLace reads
+
+Creates a per-read table from the input transcriptome-aligned bam and transcript annotation table. Includes: transcript ID, CDS position, andread position in transcript.
 
 ```{r read bam}
 reads_list <- bamtolist(
@@ -105,14 +115,16 @@ if (!length(reads_list)) {
 }
 ```
 
-Plot read length
+# Read length filtering
+
+Plots read length. Eukaryotic ribosomes usually cover 28nt.
 
 ```{r plot read length}
 length_dist <- rlength_distr(reads_list, sample = sample_name, colour = "#333f50")
 length_dist[[paste0("plot_", sample_name)]]
 ```
 
-Plot read extremities
+Plots the abundance of read 5’/3’ ends mapped around the start and stop codons of annotated CDSs, stratified by length. Limited to 95% of reads. 
 
 ```{r plot read extremities}
 ends_heatmap <- rends_heat(reads_list, annotation_dt,
@@ -121,7 +133,7 @@ ends_heatmap <- rends_heat(reads_list, annotation_dt,
 ends_heatmap[[paste0("plot_", sample_name)]]
 ```
 
-Filter reads by lengths satisfying periodicity threshold
+Filters reads to read lengths that satisfy a periodicity threshold. For a given read length, >50% of read ends fall must within one reading frame in the CDS.
 
 ```{r filter periodicity}
 filtered_list <- length_filter(data = reads_list, sample = sample_name,
@@ -129,22 +141,41 @@ filtered_list <- length_filter(data = reads_list, sample = sample_name,
                                periodicity_threshold = 50)
 ```
 
-Calculate P-site offsets and create list of P-site positions
+# P-site identification
+
+Calculates P-site offsets per read length and adds P-site position to each read. 
+
++ P-site offset (PO): distance from the 5' and 3' read ends and the first nucleotide of the P-site
++ Different read lengths may represent different ribosome conformations, so a P-site offset must be calculated for each. 
++ For each read length, first identifies P-site offset when P-site is an annotated start codon, then calculates the P-site offset.
++ P-site offsets are optimized across read length bins.
+
+Outputs:
+
++ Per-read length table: % of reads, % of reads aligned on start codon, P-site offset before/after correction
++ Filtered per-read table: adds P-site position, distance from start/stop codon, and region (UTR or CDS)
 
 ```{r psite}
-psite_offset <- psite(filtered_list, flanking = 6, extremity = "auto")
+psite_offset <- psite(filtered_list, extremity = "auto")
 reads_psite_list <- psite_info(filtered_list, psite_offset)
 ```
 
-Number of P-sites per transcript / triplet
+Calculates number of P-sites per transcript / triplet. Used for downstream translation level analysis. 
+
+Output:
+
++ Per-transcript table: ID, length, number of in-frame P-sites in coding regions (e.g., translation level)
++ Per-triplet table: transcript ID, number of P-sites; includes CDS and UTRs
 
 ```{r cds coverage}
 cds_coverage <- cds_coverage(reads_psite_list, annotation_dt)
 codon_coverage <- codon_coverage(reads_psite_list, annotation_dt, 
-                                 sample = sample_name, psite = FALSE)
+                                 sample = sample_name)
 ```
 
-Enrichment of reads in CDS
+# QC
+
+Plots P-site location on the transcript compared to background (RNAs = random fragmentation of all transcripts). P-sites should be enriched in CDSs. 
 
 ```{r cds enrichment}
 psite_per_region <- region_psite(reads_psite_list, annotation_dt,
@@ -153,7 +184,7 @@ psite_per_region <- region_psite(reads_psite_list, annotation_dt,
 psite_per_region[["plot"]]
 ```
 
-Codon periodicity on CDS (% of P-sites in 3 possible reading frames) - overall and split by read length
+Plots % of P-sites in each of the 3 possible reading frames for CDSs and UTRs, overall and stratified by read length. Used to confirm codon periodicity in CDS. 
 
 ```{r codon periodicity}
 frames <- frame_psite(reads_psite_list, annotation_dt,
@@ -169,7 +200,7 @@ frames_stratified <- frame_psite_length(reads_psite_list, annotation_dt,
 frames_stratified[[paste0("plot_",sample_name)]]
 ```
 
-Trinucleotide periodicity along coding sequences
+Plots the abundance of P-sites around CDS stop and start codons. Used to confirm trinucleotide periodicity along coding sequences.
 
 ```{r trinucleotide periodicity}
 metaprofile <- metaprofile_psite(reads_psite_list, annotation_dt,
@@ -178,7 +209,7 @@ metaprofile <- metaprofile_psite(reads_psite_list, annotation_dt,
 metaprofile[[paste0("plot_", sample_name)]]
 ```
 
-Codon usage (frequency of in-frame P-sites along coding sequences)
+Plots the codon usage frequency for in-frame P-sites along CDSs, normalized by overall codon frequency in CDSs.
 
 ```{r codon usage}
 cu_barplot <- codon_usage_psite(
@@ -192,7 +223,7 @@ cu_barplot <- codon_usage_psite(
 cu_barplot[[paste0("plot_", sample_name)]]
 ```
 
-Write CDS coverage table
+Write per-transcript coverage table
 
 ```{r write cds coverage}
 write.table(
