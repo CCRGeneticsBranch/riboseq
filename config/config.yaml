@@ -18,7 +18,8 @@ trna_fasta: "/data/khanlab3/gb_omics/resources/rnacentral/tRNA.fasta"
 snrna_fasta: "/data/khanlab3/gb_omics/resources/rnacentral/snRNA.fasta"
 
 # References for STAR build
-reference_fasta: "/fdb/GENCODE/Gencode_human/release_45/GRCh38.p14.genome.fa"
+# primary_assembly excludes alt/haplotype/patch contigs, reducing multimapping for short reads
+reference_fasta: "/fdb/GENCODE/Gencode_human/release_45/GRCh38.primary_assembly.genome.fa"
 reference_gtf: "/fdb/GENCODE/Gencode_human/release_45/gencode.v45.annotation.gtf"
 transcript_fasta: "/fdb/GENCODE/Gencode_human/release_45/gencode.v45.transcripts.fa"
 
