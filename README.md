@@ -17,16 +17,16 @@ This repository contains an in-development Snakemake pipeline for single-end Rib
 - `config/config.yaml`: run configuration template
 - `config/samples.tsv`: sample sheet template (columns: `Sample`, `Fastq`)
 
-## Running with run_riboseq.sh
+## Running with run_riboseq
 
-Use [run_riboseq.sh](run_riboseq.sh) with `--runmode` and `--workdir`.
+Use [run_riboseq](run_riboseq) with `--runmode` and `--workdir`.
 
 ### 1. Initialize a run directory
 
 This creates the work directory and copies config files.
 
 ```bash
-bash run_riboseq.sh --runmode=init --workdir=/path/to/my_run
+bash run_riboseq --runmode=init --workdir=/path/to/my_run
 ```
 
 Then edit:
@@ -38,7 +38,7 @@ Then edit:
 This validates the workflow and planned jobs without executing them.
 
 ```bash
-bash run_riboseq.sh --runmode=dryrun --workdir=/path/to/my_run
+bash run_riboseq --runmode=dryrun --workdir=/path/to/my_run
 ```
 
 ### 3. Run on SLURM
@@ -46,5 +46,5 @@ bash run_riboseq.sh --runmode=dryrun --workdir=/path/to/my_run
 This submits the pipeline through the Biowulf/SLURM path used by the wrapper.
 
 ```bash
-bash run_riboseq.sh --runmode=run --workdir=/path/to/my_run
+bash run_riboseq --runmode=run --workdir=/path/to/my_run
 ```

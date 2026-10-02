@@ -5,12 +5,25 @@ Based on Immagina ALL-IN-ONE RiboLace Gel Free documentation (V15.5)
 
 import csv
 import os
+import yaml
 
 RAW_DATA_DIR = config["raw_data_dir"]
 RESULTS_DIR = config["results_dir"]
 SAMPLES_TSV = config["samples"]
-SCRIPTS_DIR = config["scripts_dir"]
-MODULES = config["modules"]
+SCRIPTS_DIR = os.path.join(workflow.basedir, "scripts")
+with open(config["tools"]) as f:
+	TOOLS = yaml.safe_load(f)
+
+# Pipeline version (bump VERSION file on each release)
+PIPELINE_HOME = os.path.dirname(workflow.basedir)
+with open(os.path.join(PIPELINE_HOME, "VERSION")) as f:
+	PIPELINE_VERSION = f.read().strip()
+print(f"Pipeline version: {PIPELINE_VERSION}")
+
+onstart:
+	os.makedirs(RESULTS_DIR, exist_ok=True)
+	with open(os.path.join(RESULTS_DIR, "pipeline_version.txt"), "w") as f:
+		f.write(f"{PIPELINE_VERSION}\n")
 
 
 def load_samples(samples_tsv):
@@ -80,7 +93,7 @@ rule fastqc:
 	params:
 		outdir=f"{RESULTS_DIR}/qc"
 	envmodules:
-		MODULES["fastqc"]
+		TOOLS["fastqc"]
 	shell:
 		"""
 		# Get the input filename without path
@@ -117,7 +130,7 @@ rule remove_linker:
 	output:
 		f"{RESULTS_DIR}/trim/{{sample}}.trim.fastq.gz"
 	envmodules:
-		MODULES["cutadapt"]
+		TOOLS["cutadapt"]
 	shell:
 		"""
 		cutadapt --cores $SLURM_CPUS_PER_TASK --minimum-length 29 \
@@ -141,7 +154,7 @@ rule extract_umi:
 	log:
 		f"{RESULTS_DIR}/trim/{{sample}}.umi_extract.log"
 	envmodules:
-		MODULES["umi_tools"]
+		TOOLS["umi_tools"]
 	shell:
 		"""
 		umi_tools extract -I {input} \
@@ -162,7 +175,7 @@ rule remove_t:
 	output:
 		f"{RESULTS_DIR}/trim/{{sample}}.trim2.fastq.gz"
 	envmodules:
-		MODULES["cutadapt"]
+		TOOLS["cutadapt"]
 	shell:
 		"""
 		cutadapt --cores $SLURM_CPUS_PER_TASK -g ^T \
@@ -208,7 +221,7 @@ rule create_contaminant_index:
 		trna_prefix=f"{RESULTS_DIR}/filter_contaminants/index/trna",
 		snrna_prefix=f"{RESULTS_DIR}/filter_contaminants/index/snrna"
 	envmodules:
-		MODULES["bowtie2"]
+		TOOLS["bowtie2"]
 	shell:
 		"""
 		bowtie2-build --threads $SLURM_CPUS_PER_TASK -f {input.rrna} {params.rrna_prefix}
@@ -250,7 +263,7 @@ rule remove_contaminants:
 		rrna_un=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.norRNA.fastq.gz",
 		trna_un=f"{RESULTS_DIR}/filter_contaminants/{{sample}}.norRNA_notRNA.fastq.gz"
 	envmodules:
-		MODULES["bowtie2"]
+		TOOLS["bowtie2"]
 	shell:
 		"""
 		bowtie2 --threads $SLURM_CPUS_PER_TASK -N {params.mismatches} --no-1mm-upfront -q \
@@ -286,7 +299,7 @@ rule create_star_index:
 	params:
 		genome_dir=f"{RESULTS_DIR}/star/index",
 	envmodules:
-		MODULES["star"]
+		TOOLS["star"]
 	shell:
 		"""
 		STAR --runMode genomeGenerate --runThreadN $SLURM_CPUS_PER_TASK \
@@ -308,8 +321,8 @@ rule star_alignment:
 		genome_dir=f"{RESULTS_DIR}/star/index",
 		prefix=lambda wc: f"{RESULTS_DIR}/star/{wc.sample}."
 	envmodules:
-		MODULES["star"],
-		MODULES["samtools"]
+		TOOLS["star"],
+		TOOLS["samtools"]
 	shell:
 		"""
 		STAR --runThreadN $SLURM_CPUS_PER_TASK \
@@ -334,7 +347,7 @@ rule dedup_umi:
 	params: 
 		stats = f"{RESULTS_DIR}/star/{{sample}}.dedup.stats"
 	envmodules:
-		MODULES["umi_tools"]
+		TOOLS["umi_tools"]
 	shell:
 		"""
 		umi_tools dedup -I {input.bam} --output-stats={params.stats} -S {output.bam}
@@ -350,7 +363,7 @@ rule filter_transcriptome_bam:
 	output:
 		f"{RESULTS_DIR}/star/{{sample}}.dedup.transcriptome.bam"
 	envmodules:
-		MODULES["samtools"]
+		TOOLS["samtools"]
 	shell:
 		"""
 		# Extract read names surviving deduplication
@@ -380,7 +393,7 @@ rule multiqc:
 	params:
 		outdir=f"{RESULTS_DIR}/qc"
 	envmodules:
-		MODULES["multiqc"]
+		TOOLS["multiqc"]
 	shell:
 		"""
 		multiqc --force {RESULTS_DIR} -o {params.outdir} -n multiqc_report.html
@@ -409,7 +422,7 @@ rule ribowaltz:
 		ribowaltz_rmd=f"{SCRIPTS_DIR}/ribowaltz.Rmd",
 		linked_bam=f"{RESULTS_DIR}/ribowaltz/{{sample}}.dedup.transcriptome.bam",
 	envmodules:
-		MODULES["r"]
+		TOOLS["r"]
 	shell:
 		"""
 		mkdir -p {RESULTS_DIR}/ribowaltz

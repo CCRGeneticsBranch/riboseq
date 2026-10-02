@@ -1,0 +1,9 @@
+# Biowulf environment modules used by each rule
+cutadapt: "cutadapt"
+umi_tools: "umitools"
+fastqc: "fastqc"
+bowtie2: "bowtie2"
+star: "STAR"
+r: "R"
+multiqc: "multiqc"
+samtools: "samtools"
