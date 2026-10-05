@@ -427,7 +427,7 @@ rule ribowaltz:
 		"""
 		mkdir -p {RESULTS_DIR}/ribowaltz
 		ln -sfn {input.bam} {params.linked_bam}
-		Rscript -e "rmarkdown::render('{params.ribowaltz_rmd}', params=list(bam='{params.linked_bam}', gtf='{params.gtf}', transcript_fasta='{params.transcript_fasta}', cds_coverage_out='{output.coverage}'), output_file='{output.html}')"
+		Rscript -e "rmarkdown::render('{params.ribowaltz_rmd}', params=list(bam='{params.linked_bam}', gtf='{params.gtf}', transcript_fasta='{params.transcript_fasta}', cds_coverage_out='{output.coverage}'), output_file='{output.html}', intermediates_dir=tempdir(), knit_root_dir='{RESULTS_DIR}/ribowaltz')"
 		"""
 
 # Differentially Translated Genes - compare to DEGs
