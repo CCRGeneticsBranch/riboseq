@@ -3,7 +3,7 @@
 # Sample sheet TSV (columns: Sample, Fastq)
 samples: WORKDIR/config/samples.tsv
 
-# Input FASTQ directory
+# Input FASTQ directory (single-end)
 raw_data_dir: "/path/to/raw/fastqs"
 
 # Output directory
