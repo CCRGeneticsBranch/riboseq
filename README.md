@@ -73,7 +73,7 @@ bash riboseq/run_riboseq --runmode=unlock --workdir=/path/to/my_run
 
 ### Contaminant References
 
-The RNAcentral species-specific FASTA was downloaded on May 22, 2026. RNAcentral's search function was used to retrieve IDs with `TAXONOMY:"9606"` (Homo sapiens) and `so_rna_type_name:"SnRNA"` or `"TRNA"` or `"RRNA"` (RNA Type from Sequence Ontology), excluding records where `entry_type:"Gene"`. The FASTA was subset by the ID lists using `seqtk subseq`. 
+The species-specific FASTA was downloaded on May 22, 2026 from RNAcentral. RNAcentral's search function was used to retrieve IDs with `TAXONOMY:"9606"` (Homo sapiens) and `so_rna_type_name:"SnRNA"` or `"TRNA"` or `"RRNA"` (RNA Type from Sequence Ontology), excluding records where `entry_type:"Gene"`. The FASTA was subset by the ID lists using `seqtk subseq` (filter_rnacentral_with_seqtk.sh). 
 
 ## Outputs
 
